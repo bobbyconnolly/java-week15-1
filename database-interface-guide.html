@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Using Interfaces to Swap Database Implementations</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 1rem;
+      }
+      h1,
+      h2,
+      h3 {
+        color: #2c3e50;
+        margin-top: 2rem;
+      }
+      pre {
+        background: #f8f9fa;
+        border-radius: 4px;
+        padding: 1rem;
+        overflow-x: auto;
+        border: 1px solid #e9ecef;
+        width: calc(100% - 2rem);
+      }
+      .keyword {
+        color: #0033b3;
+      }
+      .string {
+        color: #067d17;
+      }
+      .comment {
+        color: #8c8c8c;
+      }
+      .number {
+        color: #1750eb;
+      }
+      .type {
+        color: #000080;
+      }
+      .tip {
+        background: #e3f2fd;
+        padding: 1rem;
+        border-radius: 4px;
+        margin: 1rem 0;
+      }
+      .warning {
+        background: #fff3e0;
+        padding: 1rem;
+        border-radius: 4px;
+        margin: 1rem 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+      }
+      th, td {
+        padding: 0.5rem;
+        border: 1px solid #e9ecef;
+      }
+      th {
+        background-color: #f8f9fa;
+      }
+      .code-comparison {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin: 1rem 0;
+      }
+      .code-comparison pre {
+        flex: 1;
+        min-width: 45%;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Using Interfaces to Swap Database Implementations 🔄</h1>
+
+    <p>
+      In our College Manager application, we've implemented a data access layer using H2 database. But what happens when
+      requirements change and we need to switch to a different database system? Maybe we need to migrate to MySQL or
+      PostgreSQL for production deployment, or SQLite for a lightweight solution.
+    </p>
+
+    <div class="tip">
+      <strong>The Power of Interfaces:</strong> One of the greatest strengths of Java is the ability to define behavior
+      through interfaces, allowing us to easily swap implementations without changing our application code.
+    </div>
+
+    <h2>Understanding the Current Architecture 🏗️</h2>
+
+    <p>
+      Let's review how our College Manager application is currently structured:
+    </p>
+
+    <ol>
+      <li><strong>Model Classes:</strong> Student, Course - define our core business entities</li>
+      <li><strong>DAO Interfaces:</strong> StudentDAO, CourseDAO, RegistrationDAO - define database operations</li>
+      <li><strong>H2 Implementations:</strong> StudentDAOImpl, CourseDAOImpl, RegistrationDAOImpl - implement DAOs for H2 database</li>
+      <li><strong>DAO Factory:</strong> Creates and returns DAO implementations</li>
+      <li><strong>Web Layer:</strong> Servlets and JSPs that use the DAOs through their interfaces</li>
+    </ol>
+
+    <div class="warning">
+      <strong>Key Insight:</strong> Because our web application only interacts with the DAO interfaces (not the implementations),
+      we can swap out the underlying database without changing any application code! 🔄
+    </div>
+
+    <h2>The DAO Pattern Revisited 📝</h2>
+
+    <p>
+      The Data Access Object (DAO) pattern is all about separating how we access data from how we manipulate it in our application.
+      Let's look at one of our current interface definitions:
+    </p>
+
+    <pre><span class="keyword">public interface</span> StudentDAO {
+    
+    <span class="comment">/**
+     * Find a student by ID
+     * @param id the student ID
+     * @return the student or null if not found
+     */</span>
+    Student findById(<span class="keyword">int</span> id);
+    
+    <span class="comment">/**
+     * Get all students
+     * @return list of all students
+     */</span>
+    List&lt;Student&gt; findAll();
+    
+    <span class="comment">/**
+     * Save a student (insert if new, update if existing)
+     * @param student the student to save
+     * @return true if successful
+     */</span>
+    <span class="keyword">boolean</span> save(Student student);
+    
+    <span class="comment">/**
+     * Delete a student
+     * @param id the student ID
+     * @return true if successful
+     */</span>
+    <span class="keyword">boolean</span> delete(<span class="keyword">int</span> id);
+}</pre>
+
+    <p>
+      Our interface defines <strong>what</strong> operations can be performed, but not <strong>how</strong> they are implemented.
+      This is perfect for swapping databases!
+    </p>
+
+    <h2>Step 1: Create a Database Configuration Manager 🔧</h2>
+
+    <p>
+      First, let's create a configuration class that will let us choose which database to use:
+    </p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.db;
+
+<span class="keyword">public class</span> DBConfig {
+    
+    <span class="comment">// Available database types</span>
+    <span class="keyword">public enum</span> DatabaseType {
+        H2,
+        MYSQL,
+        POSTGRESQL,
+        SQLITE
+    }
+    
+    <span class="comment">// Default to H2</span>
+    <span class="keyword">private static</span> DatabaseType databaseType = DatabaseType.H2;
+    
+    <span class="comment">/**
+     * Set the database type to use
+     * @param type the database type
+     */</span>
+    <span class="keyword">public static void</span> setDatabaseType(DatabaseType type) {
+        databaseType = type;
+        System.out.println(<span class="string">"Database type set to: "</span> + type);
+    }
+    
+    <span class="comment">/**
+     * Get the current database type
+     * @return the current database type
+     */</span>
+    <span class="keyword">public static</span> DatabaseType getDatabaseType() {
+        <span class="keyword">return</span> databaseType;
+    }
+    
+    <span class="comment">/**
+     * Get the JDBC URL for the current database type
+     * @return the JDBC URL
+     */</span>
+    <span class="keyword">public static</span> String getJdbcUrl() {
+        <span class="keyword">switch</span> (databaseType) {
+            <span class="keyword">case</span> H2:
+                <span class="keyword">return</span> <span class="string">"jdbc:h2:~/collegemanager;DB_CLOSE_DELAY=-1"</span>;
+            <span class="keyword">case</span> MYSQL:
+                <span class="keyword">return</span> <span class="string">"jdbc:mysql://localhost:3306/collegemanager"</span>;
+            <span class="keyword">case</span> POSTGRESQL:
+                <span class="keyword">return</span> <span class="string">"jdbc:postgresql://localhost:5432/collegemanager"</span>;
+            <span class="keyword">case</span> SQLITE:
+                <span class="keyword">return</span> <span class="string">"jdbc:sqlite:collegemanager.db"</span>;
+            <span class="keyword">default</span>:
+                <span class="keyword">throw new</span> IllegalStateException(<span class="string">"Unsupported database type: "</span> + databaseType);
+        }
+    }
+    
+    <span class="comment">/**
+     * Get the JDBC driver class for the current database type
+     * @return the JDBC driver class name
+     */</span>
+    <span class="keyword">public static</span> String getDriverClassName() {
+        <span class="keyword">switch</span> (databaseType) {
+            <span class="keyword">case</span> H2:
+                <span class="keyword">return</span> <span class="string">"org.h2.Driver"</span>;
+            <span class="keyword">case</span> MYSQL:
+                <span class="keyword">return</span> <span class="string">"com.mysql.cj.jdbc.Driver"</span>;
+            <span class="keyword">case</span> POSTGRESQL:
+                <span class="keyword">return</span> <span class="string">"org.postgresql.Driver"</span>;
+            <span class="keyword">case</span> SQLITE:
+                <span class="keyword">return</span> <span class="string">"org.sqlite.JDBC"</span>;
+            <span class="keyword">default</span>:
+                <span class="keyword">throw new</span> IllegalStateException(<span class="string">"Unsupported database type: "</span> + databaseType);
+        }
+    }
+    
+    <span class="comment">/**
+     * Get the database username
+     * @return the username
+     */</span>
+    <span class="keyword">public static</span> String getUsername() {
+        <span class="keyword">switch</span> (databaseType) {
+            <span class="keyword">case</span> H2:
+                <span class="keyword">return</span> <span class="string">"sa"</span>;
+            <span class="keyword">case</span> MYSQL:
+            <span class="keyword">case</span> POSTGRESQL:
+                <span class="keyword">return</span> <span class="string">"collegeadmin"</span>;
+            <span class="keyword">case</span> SQLITE:
+                <span class="keyword">return</span> <span class="string">""</span>; <span class="comment">// SQLite doesn't use username/password</span>
+            <span class="keyword">default</span>:
+                <span class="keyword">throw new</span> IllegalStateException(<span class="string">"Unsupported database type: "</span> + databaseType);
+        }
+    }
+    
+    <span class="comment">/**
+     * Get the database password
+     * @return the password
+     */</span>
+    <span class="keyword">public static</span> String getPassword() {
+        <span class="keyword">switch</span> (databaseType) {
+            <span class="keyword">case</span> H2:
+                <span class="keyword">return</span> <span class="string">""</span>;
+            <span class="keyword">case</span> MYSQL:
+            <span class="keyword">case</span> POSTGRESQL:
+                <span class="keyword">return</span> <span class="string">"password123"</span>; <span class="comment">// In a real app, use a secure way to store this</span>
+            <span class="keyword">case</span> SQLITE:
+                <span class="keyword">return</span> <span class="string">""</span>;
+            <span class="keyword">default</span>:
+                <span class="keyword">throw new</span> IllegalStateException(<span class="string">"Unsupported database type: "</span> + databaseType);
+        }
+    }
+}</pre>
+
+    <div class="tip">
+      <strong>Configuration Approach:</strong> This class centralizes all database configuration information. By 
+      changing a single setting, we can switch which database the entire application uses.
+    </div>
+
+    <h2>Step 2: Update the Database Utility Class ⚙️</h2>
+
+    <p>
+      Next, let's modify our DbUtil class to use the configuration manager:
+    </p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.db;
+
+<span class="keyword">import</span> java.sql.Connection;
+<span class="keyword">import</span> java.sql.DriverManager;
+<span class="keyword">import</span> java.sql.SQLException;
+
+<span class="keyword">public class</span> DbUtil {
+    
+    <span class="comment">// Static block to load the JDBC driver</span>
+    <span class="keyword">static</span> {
+        <span class="keyword">try</span> {
+            Class.forName(DBConfig.getDriverClassName());
+            System.out.println(<span class="string">"JDBC driver loaded successfully: "</span> + DBConfig.getDriverClassName());
+        } <span class="keyword">catch</span> (ClassNotFoundException e) {
+            System.err.println(<span class="string">"JDBC Driver not found: "</span> + DBConfig.getDriverClassName());
+            e.printStackTrace();
+        }
+    }
+    
+    <span class="comment">/**
+     * Get a database connection
+     * @return a new database connection
+     * @throws SQLException if connection fails
+     */</span>
+    <span class="keyword">public static</span> Connection getConnection() <span class="keyword">throws</span> SQLException {
+        <span class="keyword">return</span> DriverManager.getConnection(
+            DBConfig.getJdbcUrl(), 
+            DBConfig.getUsername(), 
+            DBConfig.getPassword()
+        );
+    }
+    
+    <span class="comment">/**
+     * Close a connection quietly (without throwing exceptions)
+     * @param connection the connection to close
+     */</span>
+    <span class="keyword">public static void</span> closeQuietly(Connection connection) {
+        <span class="keyword">if</span> (connection != <span class="keyword">null</span>) {
+            <span class="keyword">try</span> {
+                connection.close();
+            } <span class="keyword">catch</span> (SQLException e) {
+                System.err.println(<span class="string">"Error closing connection: "</span> + e.getMessage());
+            }
+        }
+    }
+}</pre>
+
+    <div class="warning">
+      <strong>Notice:</strong> We no longer hardcode the JDBC URL, driver class, username, or password in the DbUtil class. 
+      Instead, we get these values from our configuration manager.
+    </div>
+
+    <h2>Step 3: Create Schema Initializers for Different Databases 📋</h2>
+
+    <p>
+      Different databases may have slight syntax differences in their SQL DDL statements. Let's create schema 
+      initializers for each database type:
+    </p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.db;
+
+<span class="keyword">import</span> java.sql.Connection;
+<span class="keyword">import</span> java.sql.SQLException;
+
+<span class="keyword">public interface</span> SchemaInitializer {
+    <span class="comment">/**
+     * Initialize the database schema
+     * @throws SQLException if an error occurs
+     */</span>
+    <span class="keyword">void</span> initializeSchema() <span class="keyword">throws</span> SQLException;
+    
+    <span class="comment">/**
+     * Create a schema initializer for the current database type
+     * @return a SchemaInitializer implementation
+     */</span>
+    <span class="keyword">static</span> SchemaInitializer create() {
+        <span class="keyword">switch</span> (DBConfig.getDatabaseType()) {
+            <span class="keyword">case</span> H2:
+                <span class="keyword">return new</span> H2SchemaInitializer();
+            <span class="keyword">case</span> MYSQL:
+                <span class="keyword">return new</span> MySQLSchemaInitializer();
+            <span class="keyword">case</span> POSTGRESQL:
+                <span class="keyword">return new</span> PostgreSQLSchemaInitializer();
+            <span class="keyword">case</span> SQLITE:
+                <span class="keyword">return new</span> SQLiteSchemaInitializer();
+            <span class="keyword">default</span>:
+                <span class="keyword">throw new</span> IllegalStateException(<span class="string">"Unsupported database type: "</span> + DBConfig.getDatabaseType());
+        }
+    }
+}</pre>
+
+    <p>
+      Now, let's implement the H2 version of the schema initializer:
+    </p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.db;
+
+<span class="keyword">import</span> java.sql.Connection;
+<span class="keyword">import</span> java.sql.SQLException;
+<span class="keyword">import</span> java.sql.Statement;
+
+<span class="keyword">public class</span> H2SchemaInitializer <span class="keyword">implements</span> SchemaInitializer {
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public void</span> initializeSchema() <span class="keyword">throws</span> SQLException {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            <span class="comment">// Create tables</span>
+            Statement stmt = conn.createStatement();
+            
+            <span class="comment">// Create students table</span>
+            stmt.execute(
+                <span class="string">"CREATE TABLE IF NOT EXISTS students ("</span> +
+                <span class="string">"  id INT PRIMARY KEY, "</span> +
+                <span class="string">"  name VARCHAR(100) NOT NULL, "</span> +
+                <span class="string">"  email VARCHAR(100) NOT NULL UNIQUE"</span> +
+                <span class="string">")"</span>
+            );
+            
+            <span class="comment">// Create courses table</span>
+            stmt.execute(
+                <span class="string">"CREATE TABLE IF NOT EXISTS courses ("</span> +
+                <span class="string">"  code VARCHAR(10) PRIMARY KEY, "</span> +
+                <span class="string">"  title VARCHAR(100) NOT NULL, "</span> +
+                <span class="string">"  credits INT NOT NULL, "</span> +
+                <span class="string">"  instructor VARCHAR(100) NOT NULL"</span> +
+                <span class="string">")"</span>
+            );
+            
+            <span class="comment">// Create registrations table</span>
+            stmt.execute(
+                <span class="string">"CREATE TABLE IF NOT EXISTS registrations ("</span> +
+                <span class="string">"  student_id INT, "</span> +
+                <span class="string">"  course_code VARCHAR(10), "</span> +
+                <span class="string">"  PRIMARY KEY (student_id, course_code), "</span> +
+                <span class="string">"  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE, "</span> +
+                <span class="string">"  FOREIGN KEY (course_code) REFERENCES courses(code) ON DELETE CASCADE"</span> +
+                <span class="string">")"</span>
+            );
+            
+            System.out.println(<span class="string">"H2 database schema setup complete!"</span>);
+            
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+}</pre>
+
+    <p>
+      And here's a SQLite version, which has some syntax differences:
+    </p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.db;
+
+<span class="keyword">import</span> java.sql.Connection;
+<span class="keyword">import</span> java.sql.SQLException;
+<span class="keyword">import</span> java.sql.Statement;
+
+<span class="keyword">public class</span> SQLiteSchemaInitializer <span class="keyword">implements</span> SchemaInitializer {
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public void</span> initializeSchema() <span class="keyword">throws</span> SQLException {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            <span class="comment">// Enable foreign keys in SQLite (they're off by default)</span>
+            Statement pragmaStmt = conn.createStatement();
+            pragmaStmt.execute(<span class="string">"PRAGMA foreign_keys = ON"</span>);
+            
+            <span class="comment">// Create tables</span>
+            Statement stmt = conn.createStatement();
+            
+            <span class="comment">// Create students table</span>
+            stmt.execute(
+                <span class="string">"CREATE TABLE IF NOT EXISTS students ("</span> +
+                <span class="string">"  id INTEGER PRIMARY KEY, "</span> +  <span class="comment">// INTEGER instead of INT</span>
+                <span class="string">"  name TEXT NOT NULL, "</span> +     <span class="comment">// TEXT instead of VARCHAR</span>
+                <span class="string">"  email TEXT NOT NULL UNIQUE"</span> +
+                <span class="string">")"</span>
+            );
+            
+            <span class="comment">// Create courses table</span>
+            stmt.execute(
+                <span class="string">"CREATE TABLE IF NOT EXISTS courses ("</span> +
+                <span class="string">"  code TEXT PRIMARY KEY, "</span> +  <span class="comment">// TEXT instead of VARCHAR</span>
+                <span class="string">"  title TEXT NOT NULL, "</span> +
+                <span class="string">"  credits INTEGER NOT NULL, "</span> +
+                <span class="string">"  instructor TEXT NOT NULL"</span> +
+                <span class="string">")"</span>
+            );
+            
+            <span class="comment">// Create registrations table</span>
+            <span class="comment">// SQLite has different foreign key syntax</span>
+            stmt.execute(
+                <span class="string">"CREATE TABLE IF NOT EXISTS registrations ("</span> +
+                <span class="string">"  student_id INTEGER, "</span> +
+                <span class="string">"  course_code TEXT, "</span> +
+                <span class="string">"  PRIMARY KEY (student_id, course_code), "</span> +
+                <span class="string">"  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE, "</span> +
+                <span class="string">"  FOREIGN KEY (course_code) REFERENCES courses(code) ON DELETE CASCADE"</span> +
+                <span class="string">")"</span>
+            );
+            
+            System.out.println(<span class="string">"SQLite database schema setup complete!"</span>);
+            
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+}</pre>
+
+    <div class="warning">
+      <strong>Notice the differences:</strong> SQLite uses different data types (TEXT instead of VARCHAR, INTEGER instead of INT) 
+      and requires a special PRAGMA statement to enable foreign key constraints. These differences highlight why we need
+      separate initializers for each database type.
+    </div>
+
+    <h2>Step 4: Create DAO Implementations for Different Databases 💻</h2>
+
+    <p>
+      Now let's look at creating a DAO implementation for a different database type. Let's use SQLite as an example:
+    </p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.dao.impl;
+
+<span class="keyword">import</span> com.example.collegemanager.dao.StudentDAO;
+<span class="keyword">import</span> com.example.collegemanager.db.DbUtil;
+<span class="keyword">import</span> com.example.collegemanager.model.Student;
+
+<span class="keyword">import</span> java.sql.*;
+<span class="keyword">import</span> java.util.ArrayList;
+<span class="keyword">import</span> java.util.List;
+
+<span class="keyword">public class</span> SQLiteStudentDAOImpl <span class="keyword">implements</span> StudentDAO {
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public</span> Student findById(<span class="keyword">int</span> id) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            PreparedStatement stmt = conn.prepareStatement(<span class="string">"SELECT * FROM students WHERE id = ?"</span>);
+            stmt.setInt(1, id);
+            
+            ResultSet rs = stmt.executeQuery();
+            <span class="keyword">if</span> (rs.next()) {
+                String name = rs.getString(<span class="string">"name"</span>);
+                String email = rs.getString(<span class="string">"email"</span>);
+                <span class="keyword">return new</span> Student(id, name, email);
+            }
+            <span class="keyword">return null</span>;
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error finding student: "</span> + e.getMessage());
+            <span class="keyword">return null</span>;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public</span> List&lt;Student&gt; findAll() {
+        List&lt;Student&gt; students = <span class="keyword">new</span> ArrayList&lt;&gt;();
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(<span class="string">"SELECT * FROM students"</span>);
+            
+            <span class="keyword">while</span> (rs.next()) {
+                <span class="keyword">int</span> id = rs.getInt(<span class="string">"id"</span>);
+                String name = rs.getString(<span class="string">"name"</span>);
+                String email = rs.getString(<span class="string">"email"</span>);
+                students.add(<span class="keyword">new</span> Student(id, name, email));
+            }
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error finding all students: "</span> + e.getMessage());
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+        <span class="keyword">return</span> students;
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public boolean</span> save(Student student) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            
+            <span class="comment">// SQLite doesn't support MERGE or UPSERT like H2 does, so we need to do this differently</span>
+            <span class="comment">// Check if student exists</span>
+            PreparedStatement checkStmt = conn.prepareStatement(<span class="string">"SELECT COUNT(*) FROM students WHERE id = ?"</span>);
+            checkStmt.setInt(1, student.getId());
+            ResultSet rs = checkStmt.executeQuery();
+            rs.next();
+            <span class="keyword">int</span> count = rs.getInt(1);
+            
+            PreparedStatement stmt;
+            <span class="keyword">if</span> (count > 0) {
+                <span class="comment">// Update existing student</span>
+                stmt = conn.prepareStatement(<span class="string">"UPDATE students SET name = ?, email = ? WHERE id = ?"</span>);
+                stmt.setString(1, student.getName());
+                stmt.setString(2, student.getEmail());
+                stmt.setInt(3, student.getId());
+            } <span class="keyword">else</span> {
+                <span class="comment">// Insert new student</span>
+                stmt = conn.prepareStatement(<span class="string">"INSERT INTO students (id, name, email) VALUES (?, ?, ?)"</span>);
+                stmt.setInt(1, student.getId());
+                stmt.setString(2, student.getName());
+                stmt.setString(3, student.getEmail());
+            }
+            
+            <span class="keyword">int</span> result = stmt.executeUpdate();
+            <span class="keyword">return</span> result > 0;
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error saving student: "</span> + e.getMessage());
+            <span class="keyword">return false</span>;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+
+    <span class="annotation">@Override</span>
+    <span class="keyword">public boolean</span> delete(<span class="keyword">int</span> id) {
+        Connection conn = <span class="keyword">null</span>;
+        <span class="keyword">try</span> {
+            conn = DbUtil.getConnection();
+            PreparedStatement stmt = conn.prepareStatement(<span class="string">"DELETE FROM students WHERE id = ?"</span>);
+            stmt.setInt(1, id);
+            <span class="keyword">int</span> result = stmt.executeUpdate();
+            <span class="keyword">return</span> result > 0;
+        } <span class="keyword">catch</span> (SQLException e) {
+            System.err.println(<span class="string">"Error deleting student: "</span> + e.getMessage());
+            <span class="keyword">return false</span>;
+        } <span class="keyword">finally</span> {
+            DbUtil.closeQuietly(conn);
+        }
+    }
+}</pre>
+
+    <div class="tip">
+      <strong>Notice:</strong> The SQLite implementation is very similar to the H2 implementation, but with subtle 
+      differences in how certain operations are handled. SQLite may have different query syntax for certain operations or handle transactions differently.
+    </div>
+
+    <h2>Step 5: Update the DAO Factory 🏭</h2>
+
+    <p>
+      Finally, let's update our DAO factory to return the appropriate implementation based on the configured database type:
+    </p>
+
+    <pre><span class="keyword">package</span> com.example.collegemanager.dao;
+
+<span class="keyword">import</span> com.example.collegemanager.dao.impl.*;
+<span class="keyword">import</span> com.example.collegemanager.db.DBConfig;
+
+<span class="keyword">public class</span> DAOFactory {
+    <span class="keyword">private static</span> StudentDAO studentDAO;
+    <span class="keyword">private static</span> CourseDAO courseDAO;
+    <span class="keyword">private static</span> RegistrationDAO registrationDAO;
+    
+    <span class="comment">/**
+     * Get the StudentDAO instance for the configured database
+     * @return the StudentDAO
+     */</span>
+    <span class="keyword">public static</span> StudentDAO getStudentDAO() {
+        <span class="keyword">if</span> (studentDAO ==
